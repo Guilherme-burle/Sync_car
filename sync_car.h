@@ -14,6 +14,7 @@ struct estacao {
 
     int passageiros_esperando;
     int passageiros_para_embarcar;
+    int passageiros_admitidos;
     int passageiros_embarcados;
 };
 

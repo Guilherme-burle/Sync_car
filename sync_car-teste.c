@@ -1,37 +1,69 @@
 #include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <pthread.h>
+
 #include "sync_car.h"
+
+#define TOTAL_PASSAGEIROS 3
+
+struct argumentos_passageiro {
+    struct estacao *estacao;
+    int id;
+};
+
+void *thread_passageiro(void *arg)
+{
+    struct argumentos_passageiro *args = arg;
+
+    printf("Passageiro %d aguardando.\n", args->id);
+
+    estacao_esperar_carro(args->estacao);
+
+    printf("Passageiro %d autorizado a embarcar.\n", args->id);
+
+    estacao_ao_embarcar(args->estacao);
+
+    return NULL;
+}
 
 int main(void)
 {
     struct estacao estacao;
+    pthread_t threads[TOTAL_PASSAGEIROS];
+    struct argumentos_passageiro args[TOTAL_PASSAGEIROS];
 
     estacao_init(&estacao);
 
-    if (pthread_mutex_lock(&estacao.mutex) != 0) {
-        printf("Erro ao utilizar o mutex.\n");
-        return 1;
+    for (int i = 0; i < TOTAL_PASSAGEIROS; i++) {
+        args[i].estacao = &estacao;
+        args[i].id = i + 1;
+
+        if (pthread_create(&threads[i], NULL, thread_passageiro, &args[i]) != 0) {
+            perror("pthread_create");
+            return 1;
+        }
     }
 
-    if (estacao.carro_presente != 0 ||
-        estacao.assentos_livres != 0 ||
-        estacao.passageiros_esperando != 0 ||
-        estacao.passageiros_para_embarcar != 0 ||
-        estacao.passageiros_embarcados != 0) {
+    usleep(200000);
 
-        printf("Erro: estado inicial incorreto.\n");
-        pthread_mutex_unlock(&estacao.mutex);
-        return 1;
+    printf("\nCarro chegou com 2 assentos.\n");
+    estacao_carregar_carro(&estacao, 2);
+
+    usleep(200000);
+
+    printf("\nSegundo carro chegou com 1 assento.\n");
+    estacao_carregar_carro(&estacao, 1);
+
+    for (int i = 0; i < TOTAL_PASSAGEIROS; i++) {
+        pthread_join(threads[i], NULL);
     }
 
-    pthread_mutex_unlock(&estacao.mutex);
-
-    pthread_cond_signal(&estacao.carro_disponivel);
-    pthread_cond_broadcast(&estacao.embarque_completo);
+    printf("\nTodos os passageiros foram liberados.\n");
 
     pthread_mutex_destroy(&estacao.mutex);
     pthread_cond_destroy(&estacao.carro_disponivel);
     pthread_cond_destroy(&estacao.embarque_completo);
 
-    printf("Estacao inicializada com sucesso.\n");
     return 0;
 }
