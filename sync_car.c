@@ -1,83 +1,119 @@
 #include "sync_car.h"
 
-void estacao_init(struct estacao *estacao)
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+void station_init(struct station *station)
 {
-    pthread_mutex_init(&estacao->mutex, NULL);
+    if (station == NULL)
+        return;
 
-    pthread_cond_init(&estacao->carro_disponivel, NULL);
-    pthread_cond_init(&estacao->embarque_completo, NULL);
+    int result = pthread_mutex_init(&station->mutex, NULL);
 
-    estacao->carro_presente = 0;
-    estacao->assentos_livres = 0;
-
-    estacao->passageiros_esperando = 0;
-    estacao->passageiros_para_embarcar = 0;
-    estacao->passageiros_admitidos = 0;
-    estacao->passageiros_embarcados = 0;
-}
-
-void estacao_esperar_carro(struct estacao *estacao)
-{
-    pthread_mutex_lock(&estacao->mutex);
-
-    estacao->passageiros_esperando++;
-
-    while (!estacao->carro_presente ||
-           estacao->passageiros_admitidos >= estacao->passageiros_para_embarcar) {
-        pthread_cond_wait(&estacao->carro_disponivel, &estacao->mutex);
+    if (result != 0) {
+        fprintf(stderr, "Erro ao inicializar mutex: %s\n", strerror(result));
+        exit(EXIT_FAILURE);
     }
 
-    estacao->passageiros_esperando--;
-    estacao->passageiros_admitidos++;
+    result = pthread_cond_init(&station->car_available, NULL);
 
-    pthread_mutex_unlock(&estacao->mutex);
+    if (result != 0) {
+        fprintf(stderr, "Erro ao inicializar car_available: %s\n",
+                strerror(result));
+        pthread_mutex_destroy(&station->mutex);
+        exit(EXIT_FAILURE);
+    }
+
+    result = pthread_cond_init(&station->boarding_complete, NULL);
+
+    if (result != 0) {
+        fprintf(stderr, "Erro ao inicializar boarding_complete: %s\n",
+                strerror(result));
+        pthread_cond_destroy(&station->car_available);
+        pthread_mutex_destroy(&station->mutex);
+        exit(EXIT_FAILURE);
+    }
+
+    station->car_present = 0;
+    station->free_seats = 0;
+    station->waiting_passengers = 0;
+    station->passengers_to_board = 0;
+    station->passengers_admitted = 0;
+    station->passengers_boarded = 0;
 }
 
-void estacao_carregar_carro(struct estacao *estacao, int quantidade)
+void station_load_car(struct station *station, int count)
 {
-    pthread_mutex_lock(&estacao->mutex);
+    if (station == NULL || count <= 0)
+        return;
 
-    if (quantidade <= 0 || estacao->passageiros_esperando == 0) {
-        pthread_mutex_unlock(&estacao->mutex);
+    pthread_mutex_lock(&station->mutex);
+
+    if (station->waiting_passengers == 0) {
+        pthread_mutex_unlock(&station->mutex);
         return;
     }
 
-    estacao->carro_presente = 1;
-    estacao->assentos_livres = quantidade;
+    station->car_present = 1;
+    station->free_seats = count;
 
-    estacao->passageiros_para_embarcar =
-        estacao->passageiros_esperando < quantidade ?
-        estacao->passageiros_esperando : quantidade;
+    if (station->waiting_passengers < count)
+        station->passengers_to_board = station->waiting_passengers;
+    else
+        station->passengers_to_board = count;
 
-    estacao->passageiros_admitidos = 0;
-    estacao->passageiros_embarcados = 0;
+    station->passengers_admitted = 0;
+    station->passengers_boarded = 0;
 
-    pthread_cond_broadcast(&estacao->carro_disponivel);
+    pthread_cond_broadcast(&station->car_available);
 
-    while (estacao->passageiros_embarcados < estacao->passageiros_para_embarcar) {
-        pthread_cond_wait(&estacao->embarque_completo, &estacao->mutex);
-    }
+    while (station->passengers_boarded < station->passengers_to_board)
+        pthread_cond_wait(&station->boarding_complete, &station->mutex);
 
-    estacao->carro_presente = 0;
-    estacao->assentos_livres = 0;
+    station->car_present = 0;
+    station->free_seats = 0;
+    station->passengers_to_board = 0;
+    station->passengers_admitted = 0;
+    station->passengers_boarded = 0;
 
-    estacao->passageiros_para_embarcar = 0;
-    estacao->passageiros_admitidos = 0;
-    estacao->passageiros_embarcados = 0;
-
-    pthread_mutex_unlock(&estacao->mutex);
+    pthread_mutex_unlock(&station->mutex);
 }
 
-void estacao_ao_embarcar(struct estacao *estacao)
+void station_wait_for_car(struct station *station)
 {
-    pthread_mutex_lock(&estacao->mutex);
+    if (station == NULL)
+        return;
 
-    estacao->passageiros_embarcados++;
+    pthread_mutex_lock(&station->mutex);
 
-    if (estacao->passageiros_embarcados >=
-        estacao->passageiros_para_embarcar) {
-        pthread_cond_signal(&estacao->embarque_completo);
+    station->waiting_passengers++;
+
+    while (!station->car_present ||
+           station->passengers_admitted >= station->passengers_to_board) {
+        pthread_cond_wait(&station->car_available, &station->mutex);
     }
 
-    pthread_mutex_unlock(&estacao->mutex);
+    station->waiting_passengers--;
+    station->passengers_admitted++;
+    station->free_seats--;
+
+    pthread_mutex_unlock(&station->mutex);
+}
+
+void station_on_board(struct station *station)
+{
+    if (station == NULL)
+        return;
+
+    pthread_mutex_lock(&station->mutex);
+
+    if (station->passengers_boarded < station->passengers_to_board) {
+        station->passengers_boarded++;
+
+        if (station->passengers_boarded == station->passengers_to_board)
+            pthread_cond_signal(&station->boarding_complete);
+    }
+
+    pthread_mutex_unlock(&station->mutex);
 }
