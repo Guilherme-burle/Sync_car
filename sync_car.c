@@ -37,23 +37,33 @@ void estacao_carregar_carro(struct estacao *estacao, int quantidade)
 {
     pthread_mutex_lock(&estacao->mutex);
 
-    estacao->carro_presente = 0;
-    estacao->assentos_livres = 0;
-    estacao->passageiros_para_embarcar = 0;
+    if (quantidade <= 0 || estacao->passageiros_esperando == 0) {
+        pthread_mutex_unlock(&estacao->mutex);
+        return;
+    }
+
+    estacao->carro_presente = 1;
+    estacao->assentos_livres = quantidade;
+
+    estacao->passageiros_para_embarcar =
+        estacao->passageiros_esperando < quantidade ?
+        estacao->passageiros_esperando : quantidade;
+
     estacao->passageiros_admitidos = 0;
     estacao->passageiros_embarcados = 0;
 
-    if (quantidade > 0 && estacao->passageiros_esperando > 0) {
-        estacao->assentos_livres = quantidade;
+    pthread_cond_broadcast(&estacao->carro_disponivel);
 
-        estacao->passageiros_para_embarcar =
-            estacao->passageiros_esperando < quantidade ?
-            estacao->passageiros_esperando : quantidade;
-
-        estacao->carro_presente = 1;
-
-        pthread_cond_broadcast(&estacao->carro_disponivel);
+    while (estacao->passageiros_embarcados < estacao->passageiros_para_embarcar) {
+        pthread_cond_wait(&estacao->embarque_completo, &estacao->mutex);
     }
+
+    estacao->carro_presente = 0;
+    estacao->assentos_livres = 0;
+
+    estacao->passageiros_para_embarcar = 0;
+    estacao->passageiros_admitidos = 0;
+    estacao->passageiros_embarcados = 0;
 
     pthread_mutex_unlock(&estacao->mutex);
 }
@@ -63,6 +73,11 @@ void estacao_ao_embarcar(struct estacao *estacao)
     pthread_mutex_lock(&estacao->mutex);
 
     estacao->passageiros_embarcados++;
+
+    if (estacao->passageiros_embarcados >=
+        estacao->passageiros_para_embarcar) {
+        pthread_cond_signal(&estacao->embarque_completo);
+    }
 
     pthread_mutex_unlock(&estacao->mutex);
 }
